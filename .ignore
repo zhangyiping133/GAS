@@ -1,0 +1,14 @@
+# UE 生成文件
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+.vsconfig
+*.sln
+*.slnx
+
+# 系统文件
+.DS_Store
+Thumbs.db
