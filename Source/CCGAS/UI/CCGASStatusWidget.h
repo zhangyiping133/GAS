@@ -10,6 +10,7 @@ class UAbilitySystemComponent;
 class UCCGASAttributeSet;
 class UTextBlock;
 class UProgressBar;
+class ACCGASPlayerState;
 struct FOnAttributeChangeData;
 
 /**
@@ -58,12 +59,20 @@ public:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	TObjectPtr<UProgressBar> ManaBar;
 
+	/** 击杀数文本（绑定 UMG 同名控件） */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+	TObjectPtr<UTextBlock> KillsText;
+
 protected:
 	/** Health 属性变化回调 — 更新当前血量值并刷新 UI */
 	void OnHealthChanged(const FOnAttributeChangeData& Data);
 
 	/** Mana 属性变化回调 — 更新当前法力值并刷新 UI */
 	void OnManaChanged(const FOnAttributeChangeData& Data);
+
+	/** 击杀数变化回调 */
+	UFUNCTION()
+	void OnKillsChanged(int32 NewKills);
 
 	/** 刷新所有 UI 控件 — 使用当前数值更新进度条和文本 */
 	void RefreshUI();
@@ -73,6 +82,9 @@ protected:
 
 	/** 绑定的 AttributeSet（弱引用） */
 	TWeakObjectPtr<UCCGASAttributeSet> AttributeSet;
+
+	/** 绑定的 PlayerState（弱引用，用于读取击杀数） */
+	TWeakObjectPtr<ACCGASPlayerState> PlayerState;
 
 	/** 当前血量 */
 	float CurrentHealth = 100.f;

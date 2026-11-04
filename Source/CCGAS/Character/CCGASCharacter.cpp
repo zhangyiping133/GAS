@@ -16,6 +16,9 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/GameModeBase.h"
+#include "TimerManager.h"
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "Player/CCGASPlayerState.h"
@@ -76,57 +79,11 @@ void ACCGASCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 初始化 ASC / AttributeSet 缓存
-	InitAbilityActorInfo();
-
-	if (ASC)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Character BeginPlay - ASC Owner: %s, Avatar: %s"),
-			*ASC->GetOwner()->GetName(), *ASC->GetAvatarActor()->GetName());
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[CCGAS] Character BeginPlay - ASC is NULL!"));
-	}
-
-	// 通过 AbilitySet 授予默认技能（仅一次）
-	if (ASC && DefaultAbilitySet && !bAbilitiesGranted)
-	{
-		DefaultAbilitySet->GiveToAbilitySystem(ASC);
-		bAbilitiesGranted = true;
-	}
-
-	// 为本地玩家创建并绑定 HUD 状态栏
-	if (ASC && StatusWidgetClass)
-	{
-		if (APlayerController* PC = Cast<APlayerController>(GetController()))
-		{
-			if (PC->IsLocalPlayerController())
-			{
-				UCCGASStatusWidget* StatusWidget = CreateWidget<UCCGASStatusWidget>(PC, StatusWidgetClass);
-				if (StatusWidget)
-				{
-					StatusWidget->AddToViewport();
-					StatusWidget->BindToASC(ASC);
-					UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Character - StatusWidget created and bound"));
-				}
-			}
-		}
-	}
-
-	// 应用持续恢复效果（回血/回蓝）
-	// GameplayEffectSpec 是 GE 的运行态实例，MakeOutgoingSpec 创建它，
-	// ApplyGameplayEffectSpecToSelf 将其应用到自身 ASC
-	if (ASC && RegenEffectClass)
-	{
-		FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
-		FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(RegenEffectClass, 1.f, Context);
-		if (Spec.IsValid())
-		{
-			ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
-			UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Regen GE applied"));
-		}
-	}
+	// 初始化 ASC 并执行"ASC 就绪后"的一次性初始化。
+	// 注意：BeginPlay 时角色往往还没被 Controller 接管、PlayerState 尚未就绪，
+	// 因此授技/回血/HUD 统一放到 InitializeAbilitySystem 里，并会在
+	// PossessedBy / OnRep_PlayerState 中再次触发（幂等）。
+	InitializeAbilitySystem();
 }
 
 /**
@@ -139,7 +96,7 @@ void ACCGASCharacter::PossessedBy(AController* NewController)
 
 	if (NewController)
 	{
-		InitAbilityActorInfo();
+		InitializeAbilitySystem();
 	}
 }
 
@@ -151,8 +108,8 @@ void ACCGASCharacter::OnRep_PlayerState()
 {
 	Super::OnRep_PlayerState();
 
-	// 客户端初始化 ASC
-	InitAbilityActorInfo();
+	// 客户端在 PlayerState 复制完成后初始化 ASC
+	InitializeAbilitySystem();
 }
 
 // ============================================================================
@@ -196,6 +153,141 @@ void ACCGASCharacter::InitAbilityActorInfo()
 		// Owner = PlayerState, Avatar = this (Character)
 		ASC->InitAbilityActorInfo(PS, this);
 	}
+}
+
+// ============================================================================
+// InitializeAbilitySystem — ASC 就绪后的一次性初始化
+//
+// 授技能、回血 GE、HUD 都不应放在 BeginPlay 里做：BeginPlay 时角色往往
+// 还没被 Controller 接管，GetPlayerState() 返回 null，ASC 拿不到，导致
+// 授技/HUD 被跳过且不再重试（联机时客户端玩家无法放技能、没有血条）。
+// 正确做法：等 ASC 真正可用后，在服务器（PossessedBy）和客户端
+// （OnRep_PlayerState）分别触发。靠 bAbilitiesGranted / bStatusWidgetCreated
+// 两个标志保证每件事只做一次。
+// ============================================================================
+void ACCGASCharacter::InitializeAbilitySystem()
+{
+	InitAbilityActorInfo();
+
+	if (!ASC)
+	{
+		return;  // PlayerState 尚未就绪，等 PossessedBy / OnRep_PlayerState 再触发
+	}
+
+	// --- 绑定生命值变化监听（仅一次，服务器与客户端各自绑定）---
+	if (!bHealthListenerBound)
+	{
+		ASC->GetGameplayAttributeValueChangeDelegate(UCCGASAttributeSet::GetHealthAttribute())
+			.AddUObject(this, &ACCGASCharacter::OnHealthChanged);
+		bHealthListenerBound = true;
+	}
+
+	// --- 服务器：授予默认技能 + 应用持续恢复（各仅一次）---
+	if (HasAuthority() && !bAbilitiesGranted)
+	{
+		if (DefaultAbilitySet)
+		{
+			DefaultAbilitySet->GiveToAbilitySystem(ASC);
+		}
+
+		if (RegenEffectClass)
+		{
+			FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
+			FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(RegenEffectClass, 1.f, Context);
+			if (Spec.IsValid())
+			{
+				ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+				UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Regen GE applied"));
+			}
+		}
+
+		// 重生/首次生成时重置生命与法力到满值
+		if (AttributeSet)
+		{
+			AttributeSet->SetHealth(AttributeSet->GetMaxHealth());
+			AttributeSet->SetMana(AttributeSet->GetMaxMana());
+		}
+
+		bAbilitiesGranted = true;
+		UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Character - Abilities granted on server"));
+	}
+
+	// --- 本地玩家：创建并绑定 HUD 状态栏（仅一次）---
+	if (!bStatusWidgetCreated && StatusWidgetClass)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			if (PC->IsLocalPlayerController())
+			{
+				UCCGASStatusWidget* StatusWidget = CreateWidget<UCCGASStatusWidget>(PC, StatusWidgetClass);
+				if (StatusWidget)
+				{
+					StatusWidget->AddToViewport();
+					StatusWidget->BindToASC(ASC);
+					bStatusWidgetCreated = true;
+					UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Character - StatusWidget created and bound"));
+				}
+			}
+		}
+	}
+}
+
+// ============================================================================
+// Death — 生命值归零时的死亡与重生处理
+// ============================================================================
+void ACCGASCharacter::OnHealthChanged(const FOnAttributeChangeData& Data)
+{
+	// 只在服务器处理死亡；客户端属性变化来自复制，忽略
+	if (HasAuthority() && !bIsDead && Data.NewValue <= 0.f)
+	{
+		bIsDead = true;
+		HandleDeath();
+	}
+}
+
+void ACCGASCharacter::HandleDeath()
+{
+	// 记录死亡位置，供重生使用
+	const FVector DeathLocation = GetActorLocation();
+
+	// 禁用移动与碰撞（服务器权威）
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->DisableMovement();
+	}
+	SetActorEnableCollision(false);
+
+	UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Player died: %s"), *GetName());
+
+	// 保存控制器/世界的引用（本 Pawn 稍后会被销毁，不能捕获 this）
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	TWeakObjectPtr<APlayerController> WeakPC(PC);
+	UWorld* World = GetWorld();
+
+	// 延迟重生：先解除控制并销毁尸体，再在死亡位置上方重生
+	FTimerHandle RespawnTimer;
+	World->GetTimerManager().SetTimer(RespawnTimer,
+		[World, WeakPC, DeathLocation]()
+		{
+			if (!WeakPC.IsValid() || !World)
+			{
+				return;
+			}
+
+			// 1. 解除控制并销毁旧 Pawn（尸体）
+			if (APawn* OldPawn = WeakPC->GetPawn())
+			{
+				WeakPC->UnPossess();
+				OldPawn->Destroy();
+			}
+
+			// 2. 在死亡位置上方重生
+			if (AGameModeBase* GM = World->GetAuthGameMode())
+			{
+				const FTransform SpawnTransform(FRotator::ZeroRotator, DeathLocation + FVector(0.f, 0.f, 100.f));
+				GM->RestartPlayerAtTransform(WeakPC.Get(), SpawnTransform);
+			}
+		}, RespawnDelay, false);
 }
 
 // ============================================================================

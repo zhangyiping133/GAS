@@ -91,6 +91,12 @@ void UCCGASFireballAbility::SpawnProjectile()
 		return;
 	}
 
+	// 只在服务器生成真实投射物；客户端预测只播动画，投射物由服务器复制过来
+	if (!Avatar->HasAuthority())
+	{
+		return;
+	}
+
 	// 计算火球生成位置：角色前方 100 单位，高度偏移 50 单位
 	FVector Direction = Avatar->GetActorForwardVector();
 	FVector SpawnLoc = Avatar->GetActorLocation() + Direction * 100.f + FVector(0.f, 0.f, 50.f);

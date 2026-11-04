@@ -80,6 +80,12 @@ void UCCGASFrostNovaAbility::SpawnIceRing()
 		return;
 	}
 
+	// 只在服务器生成冰环；客户端预测只播动画，冰环由服务器复制过来
+	if (!Character->HasAuthority())
+	{
+		return;
+	}
+
 	FVector Origin = Character->GetActorLocation();
 
 	FActorSpawnParameters SpawnParams;

@@ -33,6 +33,7 @@ class UInputAction;
 class UCCGASAbilitySet;
 class UCCGASStatusWidget;
 class UGameplayEffect;
+struct FOnAttributeChangeData;
 
 /**
  * 玩家角色类 — 持有 ASC 的间接引用（实际 ASC 在 PlayerState 中），
@@ -85,6 +86,15 @@ protected:
 	// ========================================================================
 	void InitAbilityActorInfo();
 
+	/** ASC 就绪后执行一次性初始化：授技能、回血、本地 HUD */
+	void InitializeAbilitySystem();
+
+	/** 生命值变化回调 — Health <= 0 时触发死亡 */
+	void OnHealthChanged(const FOnAttributeChangeData& Data);
+
+	/** 服务器：处理死亡并延迟重生 */
+	void HandleDeath();
+
 	// ========================================================================
 	// Startup Abilities — 通过 AbilitySet 数据资产批量授予初始技能
 	// ========================================================================
@@ -119,6 +129,15 @@ protected:
 	/** 防止技能重复授予的标志 */
 	bool bAbilitiesGranted = false;
 
+	/** 防止本地 HUD 重复创建的标志 */
+	bool bStatusWidgetCreated = false;
+
+	/** 是否已死亡（防止重复触发死亡逻辑） */
+	bool bIsDead = false;
+
+	/** 是否已绑定生命值监听 */
+	bool bHealthListenerBound = false;
+
 	// ========================================================================
 	// Enhanced Input — 在蓝图或 C++ 默认值中设置
 	// ========================================================================
@@ -140,4 +159,8 @@ protected:
 	/** 持续恢复效果的 GameplayEffect 类，BeginPlay 时应用 */
 	UPROPERTY(EditDefaultsOnly, Category = "CCGAS|Regen")
 	TSubclassOf<UGameplayEffect> RegenEffectClass;
+
+	/** 死亡后延迟重生的时长（秒） */
+	UPROPERTY(EditDefaultsOnly, Category = "CCGAS|Death")
+	float RespawnDelay = 3.f;
 };

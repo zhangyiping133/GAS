@@ -8,6 +8,7 @@
 
 #include "CCGASPlayerState.h"
 #include "AbilitySystemComponent.h"
+#include "Net/UnrealNetwork.h"
 #include "AbilitySystem/Attributes/CCGASAttributeSet.h"
 
 ACCGASPlayerState::ACCGASPlayerState()
@@ -56,4 +57,25 @@ UAbilitySystemComponent* ACCGASPlayerState::GetASC() const
 UCCGASAttributeSet* ACCGASPlayerState::GetAttributeSet() const
 {
 	return AttributeSet;
+}
+
+void ACCGASPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(ACCGASPlayerState, Kills);
+}
+
+void ACCGASPlayerState::AddKill()
+{
+	if (HasAuthority())
+	{
+		Kills++;
+		UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Player %s Kills: %d"), *GetPlayerName(), Kills);
+		OnKillsChanged.Broadcast(Kills);  // 服务器/本地玩家直接广播
+	}
+}
+
+void ACCGASPlayerState::OnRep_Kills()
+{
+	OnKillsChanged.Broadcast(Kills);  // 客户端复制到达后广播
 }

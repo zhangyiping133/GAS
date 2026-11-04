@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Engine/NetSerialization.h"
 #include "CCGASProjectile.generated.h"
 
 class USphereComponent;
@@ -26,7 +27,7 @@ class UUserWidget;
  *      d) 触发 GameplayCue（用于音效/附加 VFX）
  *      e) 自销毁
  *
- * 网络: bReplicates = false（仅本地模拟，简化网络处理）
+ * 网络: bReplicates = true — 服务器权威结算伤害，命中表现通过 NetMulticast 广播
  */
 UCLASS()
 class CCGAS_API ACCGASProjectile : public AActor
@@ -46,10 +47,14 @@ public:
 	void InitializeProjectile(const FVector& InTargetLocation, AActor* InTargetActor);
 
 protected:
-	/** 碰撞事件回调 — 命中目标后的处理逻辑 */
+	/** 碰撞事件回调 — 命中目标后的处理逻辑（仅服务器结算） */
 	UFUNCTION()
 	void OnProjectileHit(UPrimitiveComponent* HitComp, AActor* OtherActor,
 		UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
+
+	/** 命中表现广播 — 服务器命中后通知所有客户端播放受击特效/伤害数字/GameplayCue */
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastPlayImpact(FVector_NetQuantize ImpactLocation, float Damage, bool bShowDamageNumber);
 
 	/** 碰撞检测组件（球形） */
 	UPROPERTY(VisibleAnywhere, Category = "Projectile")

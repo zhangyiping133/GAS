@@ -29,8 +29,10 @@ class CCGAS_API ACCGASIceRing : public AActor
 public:
 	ACCGASIceRing();
 
+	virtual void BeginPlay() override;
+
 	/**
-	 * 初始化冰环 — 设置位置、播放粒子、检测敌人
+	 * 初始化冰环 — 设置位置、检测敌人（粒子在 BeginPlay 中激活）
 	 * @param InLocation - 冰环生成的世界位置
 	 */
 	void Initialize(const FVector& InLocation);
@@ -43,6 +45,10 @@ protected:
 	/** 对范围内目标施加的伤害 GameplayEffect 类 */
 	UPROPERTY(EditDefaultsOnly, Category = "IceRing")
 	TSubclassOf<UGameplayEffect> DamageEffectClass;
+
+	/** 造成的伤害数值（通过 SetByCaller 传入） */
+	UPROPERTY(EditDefaultsOnly, Category = "IceRing")
+	float DamageAmount = 25.f;
 
 	/** 伤害检测半径（单位） */
 	UPROPERTY(EditDefaultsOnly, Category = "IceRing")

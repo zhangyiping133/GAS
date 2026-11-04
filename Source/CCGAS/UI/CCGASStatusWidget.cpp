@@ -3,6 +3,7 @@
 #include "CCGASStatusWidget.h"
 #include "AbilitySystemComponent.h"
 #include "../AbilitySystem/Attributes/CCGASAttributeSet.h"
+#include "../Player/CCGASPlayerState.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 
@@ -19,6 +20,11 @@ void UCCGASStatusWidget::NativeDestruct()
 	{
 		ASC->GetGameplayAttributeValueChangeDelegate(UCCGASAttributeSet::GetHealthAttribute()).RemoveAll(this);
 		ASC->GetGameplayAttributeValueChangeDelegate(UCCGASAttributeSet::GetManaAttribute()).RemoveAll(this);
+	}
+
+	if (PlayerState.IsValid())
+	{
+		PlayerState->OnKillsChanged.RemoveDynamic(this, &UCCGASStatusWidget::OnKillsChanged);
 	}
 
 	Super::NativeDestruct();
@@ -48,6 +54,15 @@ void UCCGASStatusWidget::BindToASC(UAbilitySystemComponent* InASC)
 	ASC->GetGameplayAttributeValueChangeDelegate(UCCGASAttributeSet::GetHealthAttribute()).AddUObject(this, &UCCGASStatusWidget::OnHealthChanged);
 	ASC->GetGameplayAttributeValueChangeDelegate(UCCGASAttributeSet::GetManaAttribute()).AddUObject(this, &UCCGASStatusWidget::OnManaChanged);
 
+	// === 绑定击杀数 ===
+	// ASC 挂在 PlayerState 上，Owner 即 PlayerState
+	if (ACCGASPlayerState* PS = Cast<ACCGASPlayerState>(ASC->GetOwner()))
+	{
+		PlayerState = PS;
+		PS->OnKillsChanged.AddDynamic(this, &UCCGASStatusWidget::OnKillsChanged);
+		OnKillsChanged(PS->GetKills());
+	}
+
 	RefreshUI();
 }
 
@@ -63,6 +78,14 @@ void UCCGASStatusWidget::OnManaChanged(const FOnAttributeChangeData& Data)
 	// 法力值变化时更新本地缓存并刷新 UI
 	CurrentMana = Data.NewValue;
 	RefreshUI();
+}
+
+void UCCGASStatusWidget::OnKillsChanged(int32 NewKills)
+{
+	if (KillsText)
+	{
+		KillsText->SetText(FText::FromString(FString::Printf(TEXT("击杀: %d"), NewKills)));
+	}
 }
 
 void UCCGASStatusWidget::RefreshUI()

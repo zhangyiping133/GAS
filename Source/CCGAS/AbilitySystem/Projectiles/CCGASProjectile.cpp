@@ -14,11 +14,14 @@
 #include "GameplayEffect.h"
 #include "GameplayTagContainer.h"
 #include "GameplayCue_Types.h"
+#include "AbilitySystem/Attributes/CCGASAttributeSet.h"
+#include "Player/CCGASPlayerState.h"
 
 ACCGASProjectile::ACCGASProjectile()
 {
 	PrimaryActorTick.bCanEverTick = false;
-	bReplicates = false;  // 非网络同步 — 投射物仅本地模拟
+	bReplicates = true;             // 网络复制 — 服务器生成后同步到所有客户端
+	SetReplicateMovement(true);     // 复制移动，让客户端看到投射物飞行轨迹
 
 	// === 碰撞组件 ===
 	CollisionComp = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
@@ -91,9 +94,16 @@ void ACCGASProjectile::OnProjectileHit(UPrimitiveComponent* HitComp, AActor* Oth
 		return;
 	}
 
+	// 只有服务器权威结算碰撞与伤害；客户端投射物是模拟代理，不参与结算
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("[CCGAS] Projectile hit: %s"), *OtherActor->GetName());
 
-	// === 1. 对目标应用伤害 ===
+	// === 1. 对目标应用伤害（服务器权威）===
+	bool bAppliedDamage = false;
 	if (IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(OtherActor))
 	{
 		UAbilitySystemComponent* TargetASC = ASI->GetAbilitySystemComponent();
@@ -110,23 +120,52 @@ void ACCGASProjectile::OnProjectileHit(UPrimitiveComponent* HitComp, AActor* Oth
 				Spec.Data->SetSetByCallerMagnitude(
 					FGameplayTag::RequestGameplayTag(FName("Data.Damage")), DamageAmount);
 				TargetASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+				bAppliedDamage = true;
+			}
+
+			// 击杀判定：目标血量归零则击杀者 +1
+			if (bAppliedDamage)
+			{
+				if (const UCCGASAttributeSet* TargetAttrs = TargetASC->GetSet<UCCGASAttributeSet>())
+				{
+					if (TargetAttrs->GetHealth() <= 0.f)
+					{
+						if (APawn* InstigatorPawn = GetInstigator())
+						{
+							if (ACCGASPlayerState* PS = InstigatorPawn->GetPlayerState<ACCGASPlayerState>())
+							{
+								PS->AddKill();
+							}
+						}
+					}
+				}
 			}
 		}
-
-		// 显示伤害数字 UI
-		ShowDamageNumber(GetActorLocation(), DamageAmount);
 	}
 
-	// === 2. 击中粒子特效 ===
+	// === 2. 广播命中表现给所有客户端 ===
+	MulticastPlayImpact(FVector_NetQuantize(Hit.ImpactPoint), DamageAmount, bAppliedDamage);
+
+	// 自销毁
+	Destroy();
+}
+
+void ACCGASProjectile::MulticastPlayImpact_Implementation(FVector_NetQuantize ImpactLocation, float Damage, bool bShowDamageNumber)
+{
+	// 击中粒子特效
 	if (ImpactEffect)
 	{
-		UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), ImpactEffect, GetActorLocation(),
+		UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), ImpactEffect, ImpactLocation,
 			FRotator::ZeroRotator, FVector(1.f), true);
 	}
 
-	// === 3. 触发 GameplayCue ===
+	// 伤害数字浮窗
+	if (bShowDamageNumber)
+	{
+		ShowDamageNumber(ImpactLocation, Damage);
+	}
+
 	// GameplayCue: GAS 的事件系统，用于播放音效/VFX 等一次性的表现效果
-	// 与 GameplayEffect 不同，Cue 不修改属性，只做表现层
 	if (GetInstigator())
 	{
 		if (IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(GetInstigator()))
@@ -135,16 +174,13 @@ void ACCGASProjectile::OnProjectileHit(UPrimitiveComponent* HitComp, AActor* Oth
 			if (InstigatorASC)
 			{
 				FGameplayCueParameters CueParams;
-				CueParams.Location = GetActorLocation();
+				CueParams.Location = ImpactLocation;
 				CueParams.EffectCauser = this;
 				InstigatorASC->ExecuteGameplayCue(
 					FGameplayTag::RequestGameplayTag(FName("GameplayCue.CCGAS.Fireball.Impact")), CueParams);
 			}
 		}
 	}
-
-	// 自销毁
-	Destroy();
 }
 
 void ACCGASProjectile::ShowDamageNumber(const FVector& Location, float Damage)

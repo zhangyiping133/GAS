@@ -23,6 +23,8 @@
 class UAbilitySystemComponent;
 class UCCGASAttributeSet;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnKillsChanged, int32, NewKills);
+
 /**
  * 玩家状态 — 持有 ASC 和 AttributeSet 的 GAS 核心对象。
  * 玩家角色通过此对象获取 GAS 功能。
@@ -45,6 +47,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CCGAS|AbilitySystem")
 	UCCGASAttributeSet* GetAttributeSet() const;
 
+	/** 返回击杀数 */
+	UFUNCTION(BlueprintCallable, Category = "CCGAS|Score")
+	int32 GetKills() const { return Kills; }
+
+	/** 服务器：击杀数 +1 */
+	void AddKill();
+
+	/** 击杀数变化事件（复制到客户端或本地自增时触发） */
+	UPROPERTY(BlueprintAssignable, Category = "CCGAS|Score")
+	FOnKillsChanged OnKillsChanged;
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 protected:
 	/** ASC: GAS 核心组件，处理技能执行、效果应用、属性修改、标签管理等 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CCGAS|AbilitySystem")
@@ -56,4 +71,11 @@ protected:
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "CCGAS|AbilitySystem")
 	TObjectPtr<UCCGASAttributeSet> AttributeSet;
+
+	/** 击杀数（服务器权威，复制到客户端） */
+	UPROPERTY(ReplicatedUsing = OnRep_Kills)
+	int32 Kills = 0;
+
+	UFUNCTION()
+	void OnRep_Kills();
 };

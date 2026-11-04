@@ -45,8 +45,9 @@ void UCCGASAbilityTask_Dash::Activate()
 	}
 
 	// 关闭刹车摩擦 — 让角色在冲刺时保持速度不衰减
+	// BrakingFrictionFactor 是 CMC 的权威属性，只在服务器修改
 	UCharacterMovementComponent* Movement = Character->GetCharacterMovement();
-	if (Movement)
+	if (Movement && Character->HasAuthority())
 	{
 		Movement->BrakingFrictionFactor = 0.f;
 	}
@@ -78,7 +79,10 @@ void UCCGASAbilityTask_Dash::TickTask(float DeltaTime)
 		UCharacterMovementComponent* Movement = Character->GetCharacterMovement();
 		if (Movement)
 		{
-			Movement->BrakingFrictionFactor = 2.f;  // 恢复默认摩擦
+			if (Character->HasAuthority())
+			{
+				Movement->BrakingFrictionFactor = 2.f;  // 恢复默认摩擦（服务器权威）
+			}
 			Movement->StopMovementImmediately();     // 立即停止惯性移动
 		}
 
